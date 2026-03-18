@@ -89,8 +89,15 @@ export default function FacultySmartboardPage() {
     const startScanner = async () => {
       setScannerError("");
 
+      if (typeof window !== "undefined" && !window.isSecureContext) {
+        setScannerError(
+          "Camera requires HTTPS (or localhost). Open this page on https:// (Vercel/tunnel) or scan the QR using your phone camera app."
+        );
+        return;
+      }
+
       if (!navigator?.mediaDevices?.getUserMedia) {
-        setScannerError("Camera is not supported on this device/browser.");
+        setScannerError("Camera is unavailable in this browser. Try Chrome/Safari, and allow camera permission.");
         return;
       }
 

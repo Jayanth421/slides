@@ -90,7 +90,7 @@ export default function AuthShell({
             {cornerAction ? <div className="absolute right-5 top-5 z-10">{cornerAction}</div> : null}
             {loading ? (
               <div className="absolute inset-0 z-20 grid place-items-center rounded-2xl bg-white/80 backdrop-blur-sm">
-                <CmrLoading label={loadingLabel} size="min(320px, 80vw)" />
+                <CmrLoading label={loadingLabel} size="min(220px, 70vw)" />
               </div>
             ) : null}
             <div className="mb-6 md:hidden">
