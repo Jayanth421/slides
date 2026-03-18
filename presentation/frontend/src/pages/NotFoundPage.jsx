@@ -12,7 +12,10 @@ export default function NotFoundPage() {
         />
         <h1 className="font-display text-2xl text-white">404 - Page Not Found</h1>
         <p className="mt-2 text-soft">The requested route does not exist.</p>
-        <Link className="mt-5 inline-block text-brand-300 hover:text-brand-100" to="/login">
+        <Link
+          className="mt-5 inline-block rounded-xl bg-black px-4 py-3 text-brand-300 hover:text-brand-100"
+          to="/login"
+        >
           Go to Login
         </Link>
       </GlassCard>
