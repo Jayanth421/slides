@@ -178,13 +178,7 @@ export default function LoginPage({ portalRole = null }) {
           {loading ? "Signing In..." : "Sign In"}
         </button>
 
-               <p className="text-xs text-slate-400">
-          By registering, you agree to our{" "}
-          <Link className={linkClass} to="/terms-and-conditions">
-            Terms and Conditions
-          </Link>
-          .
-        </p>
+              
       </form>
       
     </AuthShell>
