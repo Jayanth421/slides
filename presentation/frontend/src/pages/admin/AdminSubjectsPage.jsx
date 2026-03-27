@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import GlassCard from "../../components/GlassCard";
 import api from "../../services/api";
+import useRowSelection from "../../hooks/useRowSelection";
 
 export default function AdminSubjectsPage() {
   const [classes, setClasses] = useState([]);
@@ -31,10 +32,21 @@ export default function AdminSubjectsPage() {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [bulkSaving, setBulkSaving] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  const {
+    selectedIdList: selectedSubjectIds,
+    selectedCount: selectedSubjectCount,
+    isSelected: isSubjectSelected,
+    toggleSelected: toggleSubjectSelected,
+    toggleAll: toggleAllSubjects,
+    clearSelection: clearSubjectSelection
+  } = useRowSelection();
 
   const loadData = async () => {
     setLoading(true);
     setError("");
+    clearSubjectSelection();
     try {
       const [classesResponse, subjectsResponse, facultyResponse] = await Promise.all([
         api.get("/admin/classes"),
@@ -151,6 +163,43 @@ export default function AdminSubjectsPage() {
       setError(requestError?.response?.data?.message || "Failed to delete subject");
     }
   };
+
+  const handleBulkDeleteSubjects = async () => {
+    if (selectedSubjectCount === 0) return;
+    if (!window.confirm(`Delete ${selectedSubjectCount} subjects and linked uploads?`)) return;
+
+    setError("");
+    setMessage("");
+    setBulkDeleting(true);
+
+    let deletedCount = 0;
+    let failedCount = 0;
+    try {
+      for (const subjectId of selectedSubjectIds) {
+        try {
+          await api.delete(`/admin/subjects/${subjectId}`);
+          deletedCount += 1;
+        } catch (_deleteError) {
+          failedCount += 1;
+        }
+      }
+
+      if (failedCount === 0) {
+        setMessage(`Deleted ${deletedCount} subject${deletedCount === 1 ? "" : "s"}`);
+      } else {
+        setError(`Deleted ${deletedCount}, failed ${failedCount}`);
+      }
+
+      clearSubjectSelection();
+      loadData();
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
+  const subjectIds = subjects.map((item) => item.id);
+  const allSubjectsSelected =
+    subjectIds.length > 0 && subjectIds.every((id) => isSubjectSelected(id));
 
   return (
     <section className="space-y-5">
@@ -285,11 +334,43 @@ export default function AdminSubjectsPage() {
 
         {loading ? <p className="mt-3 text-soft">Loading subjects...</p> : null}
         {!loading && subjects.length === 0 ? <p className="mt-3 text-soft">No subjects available.</p> : null}
+
+        {selectedSubjectCount > 0 ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+            <p className="text-xs text-soft">{selectedSubjectCount} selected</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleBulkDeleteSubjects}
+                disabled={bulkDeleting}
+                className="rounded-lg bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-100 disabled:opacity-70"
+              >
+                {bulkDeleting ? "Deleting..." : "Delete Selected"}
+              </button>
+              <button
+                type="button"
+                onClick={clearSubjectSelection}
+                className="rounded-lg bg-white/15 px-3 py-1 text-xs text-white"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {subjects.length > 0 ? (
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="text-soft">
                 <tr>
+                  <th className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allSubjectsSelected}
+                      onChange={() => toggleAllSubjects(subjectIds)}
+                      aria-label="Select all subjects"
+                    />
+                  </th>
                   <th className="px-3 py-2">Code</th>
                   <th className="px-3 py-2">Subject</th>
                   <th className="px-3 py-2">Class</th>
@@ -300,6 +381,14 @@ export default function AdminSubjectsPage() {
               <tbody>
                 {subjects.map((item) => (
                   <tr key={item.id} className="border-t border-white/10">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={isSubjectSelected(item.id)}
+                        onChange={() => toggleSubjectSelected(item.id)}
+                        aria-label={`Select subject ${item.code}`}
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       {editingSubjectId === item.id ? (
                         <input

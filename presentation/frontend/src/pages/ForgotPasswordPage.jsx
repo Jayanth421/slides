@@ -1,13 +1,15 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import AuthShell from "../components/AuthShell";
 import api from "../services/api";
 
 const COLLEGE_EMAIL_REGEX = /^[^\s@]+@cmrcet\.ac\.in$/i;
 
 export default function ForgotPasswordPage() {
+  const location = useLocation();
   const navigate = useNavigate();
-  const [email, setEmail] = useState("");
+  const emailFromQuery = new URLSearchParams(location.search || "").get("email") || "";
+  const [email, setEmail] = useState(emailFromQuery || "");
   const [otp, setOtp] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -215,7 +217,7 @@ export default function ForgotPasswordPage() {
       )}
 
       <p className="mt-4 text-sm text-soft">
-        <Link className="text-brand-300 hover:text-brand-100" to="/login">
+        <Link className="text-brand-300 rounded-xl bg-black px-4 py-3 bg-black hover:text-brand-100" to="/login">
           Back to login
         </Link>
       </p>

@@ -3,6 +3,7 @@ import { useLocation } from "react-router-dom";
 import GlassCard from "../../components/GlassCard";
 import PortalIcon from "../../components/PortalIcon";
 import api from "../../services/api";
+import useRowSelection from "../../hooks/useRowSelection";
 
 const ROLE_OPTIONS = ["ALL", "STUDENT", "FACULTY", "ADMIN", "SMARTBOARD"];
 const YEAR_OPTIONS = ["1", "2", "3", "4"];
@@ -111,10 +112,21 @@ export default function AdminUsersPage() {
   const [downloadLoading, setDownloadLoading] = useState("");
   const [confirmCreateOpen, setConfirmCreateOpen] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  const {
+    selectedIdList: selectedUserIds,
+    selectedCount: selectedUserCount,
+    isSelected: isUserSelected,
+    toggleSelected: toggleUserSelected,
+    toggleAll: toggleAllUsers,
+    clearSelection: clearUserSelection
+  } = useRowSelection();
 
   const loadUsers = async (roleFilter = selectedRole) => {
     setLoading(true);
     setError("");
+    clearUserSelection();
     try {
       const params = roleFilter && roleFilter !== "ALL" ? { role: roleFilter } : undefined;
       const [usersResponse, classesResponse] = await Promise.all([
@@ -368,7 +380,49 @@ export default function AdminUsersPage() {
     }
   };
 
+  const handleBulkDeleteUsers = async () => {
+    if (selectedUserCount === 0) return;
+
+    const confirmed = window.confirm(`Delete ${selectedUserCount} users?`);
+    if (!confirmed) return;
+
+    setError("");
+    setMessage("");
+    setBulkDeleting(true);
+
+    let deletedCount = 0;
+    let failedCount = 0;
+
+    try {
+      for (const userId of selectedUserIds) {
+        try {
+          await api.delete(`/admin/users/${userId}`);
+          deletedCount += 1;
+        } catch (_deleteError) {
+          failedCount += 1;
+        }
+      }
+
+      if (failedCount === 0) {
+        setMessage(`Deleted ${deletedCount} user${deletedCount === 1 ? "" : "s"}`);
+      } else {
+        setError(`Deleted ${deletedCount}, failed ${failedCount}`);
+      }
+
+      clearUserSelection();
+      if (editForm.id && selectedUserIds.includes(String(editForm.id))) {
+        setEditForm(initialEditForm);
+      }
+      loadUsers();
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   const getSectionsForBranch = (branch) => SECTION_OPTIONS_BY_BRANCH[branch] || [];
+
+  const userIds = users.map((user) => user.id);
+  const allUsersSelected = userIds.length > 0 && userIds.every((id) => isUserSelected(id));
 
   return (
     <section className="space-y-5">
@@ -916,11 +970,42 @@ export default function AdminUsersPage() {
         {loading ? <p className="mt-3 text-soft">Loading users...</p> : null}
         {!loading && users.length === 0 ? <p className="mt-3 text-soft">No users found.</p> : null}
 
+        {selectedUserCount > 0 ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+            <p className="text-xs text-soft">{selectedUserCount} selected</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleBulkDeleteUsers}
+                disabled={bulkDeleting}
+                className="rounded-lg bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-100 disabled:opacity-70"
+              >
+                {bulkDeleting ? "Deleting..." : "Delete Selected"}
+              </button>
+              <button
+                type="button"
+                onClick={clearUserSelection}
+                className="rounded-lg bg-white/15 px-3 py-1 text-xs text-white"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {users.length > 0 ? (
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="text-soft">
                 <tr>
+                  <th className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allUsersSelected}
+                      onChange={() => toggleAllUsers(userIds)}
+                      aria-label="Select all users"
+                    />
+                  </th>
                   <th className="px-3 py-2">User</th>
                   <th className="px-3 py-2">Email</th>
                   <th className="px-3 py-2">Role</th>
@@ -934,6 +1019,14 @@ export default function AdminUsersPage() {
               <tbody>
                 {users.map((user) => (
                   <tr key={user.id} className="border-t border-white/10">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={isUserSelected(user.id)}
+                        onChange={() => toggleUserSelected(user.id)}
+                        aria-label={`Select user ${user.email}`}
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-3">
                         {user.profilePhoto ? (

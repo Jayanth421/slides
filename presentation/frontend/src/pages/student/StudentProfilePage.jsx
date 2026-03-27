@@ -118,6 +118,20 @@ function SettingsRow({ icon, label, onClick, to, active = false, danger = false,
   );
 }
 
+function InfoRow({ label, value }) {
+  const displayValue =
+    value === undefined || value === null || String(value).trim() === "" ? "-" : String(value);
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+        {label}
+      </p>
+      <p className="text-sm font-semibold text-[#141414]">{displayValue}</p>
+    </div>
+  );
+}
+
 export default function StudentProfilePage() {
   const { user, updateUserSession, logout } = useAuth();
   const navigate = useNavigate();
@@ -153,6 +167,11 @@ export default function StudentProfilePage() {
       try {
         const response = await api.get("/student/profile");
         const profile = response.data.profile || {};
+        if (user) {
+          updateUserSession({ ...user, ...profile });
+        } else {
+          updateUserSession(profile);
+        }
         setForm({
           name: profile.name || "",
           mobile: profile.mobile || "",
@@ -284,7 +303,7 @@ export default function StudentProfilePage() {
               </p>
             </div>
 
-            <label className="mt-4 inline-flex cursor-pointer items-center justify-center rounded-xl bg-[#141414] px-4 py-2 text-sm font-semibold text-white transition hover:bg-black">
+            <label className="mt-4 inline-flex cursor-pointer items-center justify-center rounded-xl bg-gray5 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white">
               Change Photo
               <input type="file" accept="image/*" className="hidden" onChange={onSelectPhoto} />
             </label>
@@ -308,35 +327,33 @@ export default function StudentProfilePage() {
           </div>
         </div>
 
-        <div className="student-profile-accent-card rounded-3xl border border-slate-200 bg-white p-5 text-[#141414] shadow-[0_12px_28px_rgba(20,20,20,0.08)] sm:p-6">
-          <p className="text-[11px] uppercase tracking-[0.22em] text-slate-600">Quick actions</p>
-          <h3 className="mt-2 text-xl font-semibold">Profile control panel</h3>
-          <p className="mt-2 text-sm text-slate-600">
-            Manage your student profile, password, notifications, and support tools.
+        <div className="student-profile-card rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_12px_28px_rgba(20,20,20,0.08)] sm:p-6">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-600">
+            College details
           </p>
-          <div className="mt-5 space-y-2">
-            <button
-              type="button"
-              onClick={() => setOpenSection("profile")}
-              className="w-full rounded-xl border border-slate-300 bg-black px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#262626]"
-            >
-              Edit profile details
-            </button>
-            <button
-              type="button"
-              onClick={() => setOpenSection("password")}
-              className="w-full rounded-xl border border-slate-300 bg-black px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[#262626]"
-            >
-              Change password
-            </button>
-            <Link
-              to="/student/notifications"
-              className="block w-full rounded-xl border border-slate-300 bg-black px-3 py-2.5 text-center text-sm font-semibold text-white transition hover:bg-[#262626]"
-            >
-              View notifications
-            </Link>
+          <h3 className="mt-2 font-display text-xl text-[#141414]">Academic Info</h3>
+          <p className="mt-1 text-sm text-slate-600">
+            Roll number, department, year, and class details.
+          </p>
+
+          <div className="mt-5 space-y-3">
+            <InfoRow label="College Email" value={user?.email || ""} />
+            <InfoRow label="Roll Number" value={user?.rollNumber || ""} />
+            <InfoRow label="Department" value={user?.branch || ""} />
+            <InfoRow label="Year" value={user?.year ? `Year ${user.year}` : ""} />
+            <InfoRow label="Section" value={user?.section || ""} />
+            <InfoRow
+              label="Class"
+              value={user?.year && user?.section ? `Year ${user.year} ${user.section}` : ""}
+            />
+            <InfoRow label="Class ID" value={user?.classId || ""} />
+            <InfoRow
+              label="Last Login"
+              value={user?.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString() : ""}
+            />
           </div>
         </div>
+
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.45fr_1fr] lg:items-start">
@@ -449,7 +466,7 @@ export default function StudentProfilePage() {
                   <button
                     type="submit"
                     disabled={savingPassword}
-                    className="w-full rounded-xl bg-[#141414] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-70"
+                    className="w-full rounded-xl bg-black px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-black disabled:opacity-70"
                   >
                     {savingPassword ? "Updating..." : "Update Password"}
                   </button>

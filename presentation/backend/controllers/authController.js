@@ -41,8 +41,11 @@ const Subject = require("../mongoModels/Subject");
 const Upload = require("../mongoModels/Upload");
 const User = require("../mongoModels/User");
 const { createAndSendOtp, verifyOtp } = require("../services/otpService");
+const { getActiveMailSettings } = require("../services/mailSettingsService");
+const { renderMailTemplateByKey } = require("../services/mailTemplateRenderer");
 const { generateQrDataUrl } = require("../services/qrService");
 const { createPresignedDownloadUrl } = require("../services/s3Service");
+const { sendMail } = require("../services/mailerService");
 const ApiError = require("../utils/apiError");
 const asyncHandler = require("../utils/asyncHandler");
 const { hashToken } = require("../utils/crypto");
@@ -160,12 +163,14 @@ function resolveSmartboardActionBase(req) {
   const requestOrigin =
     tryReadOrigin(req.get("origin")) ||
     tryReadOrigin(req.get("referer"));
+  // Prefer the requesting frontend origin (e.g. smartboard UI) so the QR opens the app domain,
+  // even when APP_BASE_URL/CORS_ORIGINS are configured for the API domain.
+  if (requestOrigin && !isPlaceholderHost(requestOrigin)) {
+    return convertLocalOriginToLan(requestOrigin);
+  }
 
   const configuredAppBase = tryReadOrigin(process.env.APP_BASE_URL);
   if (configuredAppBase && !isPlaceholderHost(configuredAppBase)) {
-    if (isLocalOrigin(configuredAppBase) && requestOrigin && !isLocalOrigin(requestOrigin)) {
-      return requestOrigin;
-    }
     return convertLocalOriginToLan(configuredAppBase);
   }
 
@@ -174,14 +179,7 @@ function resolveSmartboardActionBase(req) {
     .map((item) => tryReadOrigin(item))
     .find(Boolean);
   if (firstCorsOrigin && !isPlaceholderHost(firstCorsOrigin)) {
-    if (isLocalOrigin(firstCorsOrigin) && requestOrigin && !isLocalOrigin(requestOrigin)) {
-      return requestOrigin;
-    }
     return convertLocalOriginToLan(firstCorsOrigin);
-  }
-
-  if (requestOrigin) {
-    return convertLocalOriginToLan(requestOrigin);
   }
 
   const forwardedHost = String(req.get("x-forwarded-host") || req.get("host") || "").trim();
@@ -338,6 +336,22 @@ const verifyRegistrationOtp = asyncHandler(async (req, res) => {
   if (!user) throw new ApiError(404, "User not found");
 
   await markUserAsVerified(user.id);
+
+  try {
+    const mailSettings = await getActiveMailSettings();
+    const rendered = await renderMailTemplateByKey("WELCOME_EMAIL", {
+      name: user.name || "User"
+    });
+    await sendMail({
+      to: normalizedEmail,
+      subject: rendered.subject,
+      text: rendered.text,
+      html: rendered.html,
+      smtpConfig: mailSettings
+    });
+  } catch (error) {
+    console.warn("Welcome email send failed:", error?.message || String(error));
+  }
 
   res.status(200).json({
     message: "Account verified successfully"

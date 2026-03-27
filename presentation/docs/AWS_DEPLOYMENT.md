@@ -1,5 +1,7 @@
 # CMR Smart Presentation Portal - AWS Deployment Guide
 
+For the AWS account + S3/IAM setup used by this repo, also see `docs/AWS_ACCOUNT_SETUP.md`.
+
 ## 1. Launch EC2 (Backend Host)
 1. Launch Ubuntu 24.04 LTS EC2 (`t3.medium` or higher).
 2. Open security group ports:
@@ -32,28 +34,19 @@ pm2 save
 pm2 startup
 ```
 
-## 4. Create RDS MySQL
-1. Create Amazon RDS MySQL (Multi-AZ recommended for production).
-2. Set DB subnet group + security group.
-3. Allow inbound `3306` only from EC2 security group.
-4. Create database and run:
-   - [`backend/sql/schema.sql`](/C:/Users/manoh/Downloads/presentation/backend/sql/schema.sql)
-   - optional demo users: [`backend/sql/seed_demo_users.sql`](/C:/Users/manoh/Downloads/presentation/backend/sql/seed_demo_users.sql)
-   - example: `mysql -u <db_user> -p <db_name> < /var/www/cmr-portal/backend/sql/seed_demo_users.sql`
-
-## 5. Connect Backend to RDS
-1. Update EC2 backend `.env`:
-   - `DB_HOST=<rds-endpoint>`
-   - `DB_PORT=3306`
-   - `DB_USER`, `DB_PASSWORD`, `DB_NAME`
-2. Restart PM2:
+## 4. Configure MongoDB (Atlas)
+1. Create a MongoDB Atlas cluster (or use an existing one).
+2. Create a database user and get the connection string.
+3. Atlas → Network Access: allow the EC2 outbound IP (or use a temporary wide rule for testing).
+4. Set `MONGO_URI` in the EC2 backend `.env`.
+5. Restart PM2:
 ```bash
 cd /var/www/cmr-portal/backend
 pm2 restart cmr-backend
 pm2 logs cmr-backend
 ```
 
-## 6. Create S3 Bucket for PPT Storage
+## 5. Create S3 Bucket for PPT Storage
 1. Create bucket (private).
 2. Enable versioning.
 3. Add CORS:
@@ -68,9 +61,9 @@ pm2 logs cmr-backend
 ]
 ```
 Note (local dev): include `http://localhost:5173` and/or `http://localhost:5000` in `AllowedOrigins`, or set `S3_UPLOAD_MODE=proxy` on the backend to upload via the backend API (avoids browser S3 CORS).
-4. Keep bucket private and use signed URLs from backend.
+4. Keep bucket private and serve downloads via CloudFront (recommended). Smartboard sessions use S3 presigned download URLs automatically.
 
-## 7. Configure IAM Access
+## 6. Configure IAM Access
 1. Prefer EC2 instance role (no static keys).
 2. Policy scope:
    - `s3:PutObject`
@@ -83,7 +76,7 @@ Note (local dev): include `http://localhost:5173` and/or `http://localhost:5000`
    - `PYTHON_BIN=python3`
    - `PYTHON_MAIL_SCRIPT=scripts/send_mail.py`
 
-## 8. Setup CloudFront CDN
+## 7. Setup CloudFront CDN
 1. Create CloudFront distribution with S3 origin.
 2. Restrict S3 direct access using Origin Access Control (OAC).
 3. Configure behavior:
@@ -91,7 +84,7 @@ Note (local dev): include `http://localhost:5173` and/or `http://localhost:5000`
    - Cache policy for presentation files
 4. Set `CLOUDFRONT_URL` in backend `.env`.
 
-## 9. Configure Nginx Reverse Proxy + SSL (Let's Encrypt)
+## 8. Configure Nginx Reverse Proxy + SSL (Let's Encrypt)
 1. Create Nginx server block:
 ```nginx
 server {

@@ -177,8 +177,6 @@ export default function LoginPage({ portalRole = null }) {
         >
           {loading ? "Signing In..." : "Sign In"}
         </button>
-
-              
       </form>
       
     </AuthShell>

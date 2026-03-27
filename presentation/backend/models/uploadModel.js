@@ -1,4 +1,5 @@
 const Upload = require("../mongoModels/Upload");
+const { upsertUploadRecord } = require("../services/mysqlFileDbService");
 
 async function createUpload({
   uploadedBy,
@@ -24,6 +25,12 @@ async function createUpload({
     fileType,
     category
   });
+
+  try {
+    await upsertUploadRecord(created);
+  } catch (error) {
+    console.warn("MySQL file DB sync failed:", error?.message || String(error));
+  }
 
   return { insertId: created.id };
 }

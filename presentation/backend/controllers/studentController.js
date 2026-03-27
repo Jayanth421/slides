@@ -11,6 +11,7 @@ const Subject = require("../mongoModels/Subject");
 const Upload = require("../mongoModels/Upload");
 const User = require("../mongoModels/User");
 const { signUploadToken, verifyUploadToken } = require("../config/jwt");
+const { deleteUploadRecord, upsertUploadRecord } = require("../services/mysqlFileDbService");
 const { buildFileUrl, buildUploadUrl, doesUploadedFileExist } = require("../services/storageService");
 const ApiError = require("../utils/apiError");
 const asyncHandler = require("../utils/asyncHandler");
@@ -512,6 +513,12 @@ const updateStudentPresentation = asyncHandler(async (req, res) => {
     .lean()
     .exec();
 
+  try {
+    await upsertUploadRecord(updated);
+  } catch (error) {
+    console.warn("MySQL file DB sync failed:", error?.message || String(error));
+  }
+
   res.status(200).json({
     message: "Presentation updated",
     presentation: mapPresentation(updated)
@@ -651,6 +658,12 @@ const completeStudentPresentationReplace = asyncHandler(async (req, res) => {
   upload.reviewedAt = null;
   await upload.save();
 
+  try {
+    await upsertUploadRecord(upload);
+  } catch (error) {
+    console.warn("MySQL file DB sync failed:", error?.message || String(error));
+  }
+
   res.status(200).json({
     message: "Presentation file replaced successfully",
     fileUrl,
@@ -671,6 +684,12 @@ const deleteStudentPresentation = asyncHandler(async (req, res) => {
     category: "STUDENT_PRESENTATION"
   });
   if (!deleted.deletedCount) throw new ApiError(404, "Presentation not found");
+
+  try {
+    await deleteUploadRecord(presentationId);
+  } catch (error) {
+    console.warn("MySQL file DB delete failed:", error?.message || String(error));
+  }
 
   res.status(200).json({ message: "Presentation deleted" });
 });

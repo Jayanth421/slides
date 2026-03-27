@@ -22,16 +22,24 @@ const {
   getDepartments,
   getUploadsAdmin,
   getMailSettings,
+  getMailTemplates,
+  getMySqlFileDbSettings,
   getSubjects,
   getAnalytics,
   getAnnouncementsForAdmin,
   getUsers,
+  seedMailTemplates,
   sendBulkMail,
   sendTestMail,
+  createMailTemplate,
+  updateMailTemplate,
+  deleteMailTemplate,
+  testMySqlFileDbSettings,
   updateClass,
   updateDepartment,
   updateSubject,
   updateUserByAdmin,
+  upsertMySqlFileDbSettings,
   upsertMailSettings
 } = require("../controllers/adminController");
 const authorizeRoles = require("../middlewares/authorizeRoles");
@@ -72,6 +80,8 @@ router.get("/downloads/uploads-zip", downloadUploadsZipBySection);
 router.get("/templates/academic", downloadAcademicTemplate);
 router.get("/templates/users", downloadUsersTemplate);
 router.get("/settings/mail", getMailSettings);
+router.get("/settings/mysql", getMySqlFileDbSettings);
+router.get("/mail/templates", getMailTemplates);
 router.get("/announcements", getAnnouncementsForAdmin);
 router.post("/departments", createDepartment);
 router.post("/classes", createClass);
@@ -81,6 +91,9 @@ router.post("/users", createUserByAdmin);
 router.post("/users/bulk-import", uploadUserImportFile, bulkImportUsersByAdmin);
 router.post("/academic/bulk-import", uploadAcademicImportFile, bulkImportAcademicByAdmin);
 router.post("/settings/mail/test", sendTestMail);
+router.post("/settings/mysql/test", testMySqlFileDbSettings);
+router.post("/mail/templates/seed", seedMailTemplates);
+router.post("/mail/templates", createMailTemplate);
 router.post("/mail/send", sendBulkMail);
 router.post("/announcements", createAnnouncementByAdmin);
 router.put("/departments/:departmentId", updateDepartment);
@@ -88,9 +101,12 @@ router.put("/classes/:classId", updateClass);
 router.put("/subjects/:subjectId", updateSubject);
 router.put("/users/:userId", updateUserByAdmin);
 router.put("/settings/mail", upsertMailSettings);
+router.put("/settings/mysql", upsertMySqlFileDbSettings);
+router.put("/mail/templates/:templateId", updateMailTemplate);
 router.delete("/departments/:departmentId", deleteDepartment);
 router.delete("/classes/:classId", deleteClass);
 router.delete("/subjects/:subjectId", deleteSubject);
 router.delete("/users/:userId", deleteUserByAdmin);
+router.delete("/mail/templates/:templateId", deleteMailTemplate);
 
 module.exports = router;

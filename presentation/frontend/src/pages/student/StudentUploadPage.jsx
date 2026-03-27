@@ -71,7 +71,7 @@ export default function StudentUploadPage() {
 
     if (!form.subjectId) {
       setError("Please select a subject");
-      return;
+      return; 
     }
 
     if (!form.title.trim()) {
@@ -163,9 +163,9 @@ export default function StudentUploadPage() {
         Upload PPT/PPTX/PDF with title, description, and subject mapping.
       </p>
 
-      {error ? <p className="mt-4 text-sm text-red-300">{error}</p> : null}
+      {error ? <p className="mt-4 text-sm text-red-300 ">{error}</p> : null}
       {!loadingSubjects && !error && subjects.length === 0 ? (
-        <p className="mt-4 text-sm text-amber-200">
+        <p className="mt-4 text-sm text-red-500">
           No subjects assigned to your account yet. Please contact admin.
         </p>
       ) : null}

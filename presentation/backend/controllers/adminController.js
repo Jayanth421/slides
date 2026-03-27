@@ -11,6 +11,8 @@ const OtpCode = require("../mongoModels/OtpCode");
 const RefreshToken = require("../mongoModels/RefreshToken");
 const SmartboardSession = require("../mongoModels/SmartboardSession");
 const SmtpSetting = require("../mongoModels/SmtpSetting");
+const MySqlFileDbSetting = require("../mongoModels/MySqlFileDbSetting");
+const MailTemplate = require("../mongoModels/MailTemplate");
 const Subject = require("../mongoModels/Subject");
 const Upload = require("../mongoModels/Upload");
 const User = require("../mongoModels/User");
@@ -20,6 +22,18 @@ const ApiError = require("../utils/apiError");
 const asyncHandler = require("../utils/asyncHandler");
 const { isValidEmail, normalizeEmail, validateEmailByRole } = require("../utils/emailRules");
 const { sendMail } = require("../services/mailerService");
+const DEFAULT_MAIL_TEMPLATES = require("../services/defaultMailTemplates");
+const {
+  buildCommonMailVars,
+  getDefaultTemplateByKey,
+  getTemplateByKey,
+  renderString
+} = require("../services/mailTemplateRenderer");
+const {
+  getActiveMySqlFileDbSettings,
+  maskMySqlFileDbSettingsForResponse,
+  testMySqlConnection
+} = require("../services/mysqlFileDbService");
 
 function handleDuplicateKeyError(error, entityName) {
   if (error?.code === 11000) {
@@ -1731,6 +1745,122 @@ const getMailSettings = asyncHandler(async (req, res) => {
   });
 });
 
+function sanitizeSqlIdentifier(value, fallback = "file_uploads") {
+  const normalized = String(value || "").trim();
+  if (!normalized) return fallback;
+  if (!/^[a-zA-Z0-9_]+$/.test(normalized)) {
+    throw new ApiError(400, "tableName must contain only letters, numbers, and underscore");
+  }
+  return normalized;
+}
+
+const getMySqlFileDbSettings = asyncHandler(async (req, res) => {
+  const settings = await getActiveMySqlFileDbSettings();
+  res.status(200).json({
+    settings: maskMySqlFileDbSettingsForResponse(settings)
+  });
+});
+
+const upsertMySqlFileDbSettings = asyncHandler(async (req, res) => {
+  const existing = await MySqlFileDbSetting.findOne({ key: "default" }).lean().exec();
+  const merged = {
+    ...(existing || {}),
+    enabled: req.body.enabled !== undefined ? Boolean(req.body.enabled) : Boolean(existing?.enabled),
+    host: String(req.body.host ?? existing?.host ?? "").trim(),
+    port: Number(req.body.port ?? existing?.port ?? 3306),
+    ssl: req.body.ssl !== undefined ? Boolean(req.body.ssl) : Boolean(existing?.ssl),
+    user: String(req.body.user ?? existing?.user ?? "").trim(),
+    pass:
+      req.body.pass !== undefined && String(req.body.pass || "").trim()
+        ? String(req.body.pass || "").trim()
+        : String(existing?.pass || "").trim(),
+    database: String(req.body.database ?? existing?.database ?? "").trim(),
+    tableName: sanitizeSqlIdentifier(
+      req.body.tableName ?? existing?.tableName ?? "file_uploads",
+      "file_uploads"
+    )
+  };
+
+  if (merged.enabled) {
+    const missing = [];
+    if (!merged.host) missing.push("host");
+    if (!merged.port) missing.push("port");
+    if (!merged.user) missing.push("user");
+    if (!merged.pass) missing.push("pass");
+    if (!merged.database) missing.push("database");
+    if (missing.length) {
+      throw new ApiError(400, `MySQL settings incomplete: ${missing.join(", ")}`);
+    }
+  }
+
+  await MySqlFileDbSetting.updateOne(
+    { key: "default" },
+    {
+      $set: {
+        key: "default",
+        enabled: merged.enabled,
+        host: merged.host,
+        port: merged.port,
+        user: merged.user,
+        pass: merged.pass,
+        database: merged.database,
+        ssl: merged.ssl,
+        tableName: merged.tableName,
+        updatedBy: req.user.userId
+      }
+    },
+    { upsert: true }
+  );
+
+  res.status(200).json({
+    message: "MySQL file database settings saved",
+    settings: maskMySqlFileDbSettingsForResponse(merged)
+  });
+});
+
+const testMySqlFileDbSettings = asyncHandler(async (req, res) => {
+  const existing = await MySqlFileDbSetting.findOne({ key: "default" }).lean().exec();
+  const merged = {
+    ...(existing || {}),
+    host: String(req.body.host ?? existing?.host ?? "").trim(),
+    port: Number(req.body.port ?? existing?.port ?? 3306),
+    ssl: req.body.ssl !== undefined ? Boolean(req.body.ssl) : Boolean(existing?.ssl),
+    user: String(req.body.user ?? existing?.user ?? "").trim(),
+    pass:
+      req.body.pass !== undefined && String(req.body.pass || "").trim()
+        ? String(req.body.pass || "").trim()
+        : String(existing?.pass || "").trim(),
+    database: String(req.body.database ?? existing?.database ?? "").trim()
+  };
+
+  const missing = [];
+  if (!merged.host) missing.push("host");
+  if (!merged.port) missing.push("port");
+  if (!merged.user) missing.push("user");
+  if (!merged.pass) missing.push("pass");
+  if (!merged.database) missing.push("database");
+  if (missing.length) {
+    throw new ApiError(400, `MySQL settings incomplete: ${missing.join(", ")}`);
+  }
+
+  try {
+    await testMySqlConnection({
+      enabled: true,
+      host: merged.host,
+      port: merged.port,
+      user: merged.user,
+      pass: merged.pass,
+      database: merged.database,
+      ssl: Boolean(merged.ssl),
+      tableName: "file_uploads"
+    });
+  } catch (error) {
+    throw new ApiError(502, error?.message || "Failed to connect to MySQL");
+  }
+
+  res.status(200).json({ message: "MySQL connection successful" });
+});
+
 const upsertMailSettings = asyncHandler(async (req, res) => {
   const existing = await SmtpSetting.findOne({ key: "default" }).lean().exec();
   const merged = {
@@ -1780,6 +1910,166 @@ const upsertMailSettings = asyncHandler(async (req, res) => {
   });
 });
 
+function normalizeMailTemplateKey(value) {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (!normalized) throw new ApiError(400, "key is required");
+  if (!/^[A-Z0-9_]{3,80}$/.test(normalized)) {
+    throw new ApiError(400, "key must be 3-80 chars (A-Z, 0-9, underscore)");
+  }
+  return normalized;
+}
+
+const getMailTemplates = asyncHandler(async (_req, res) => {
+  const rows = await MailTemplate.find({}).sort({ updatedAt: -1 }).lean().exec();
+  res.status(200).json({
+    templates: rows.map((item) => ({
+      id: String(item._id),
+      key: item.key,
+      name: item.name,
+      description: item.description || "",
+      subject: item.subject,
+      text: item.text || "",
+      html: item.html || "",
+      updatedAt: item.updatedAt,
+      createdAt: item.createdAt
+    }))
+  });
+});
+
+const seedMailTemplates = asyncHandler(async (req, res) => {
+  let createdCount = 0;
+  let skippedCount = 0;
+
+  for (const template of DEFAULT_MAIL_TEMPLATES) {
+    const result = await MailTemplate.updateOne(
+      { key: template.key },
+      {
+        $setOnInsert: {
+          key: template.key,
+          name: template.name,
+          description: template.description || "",
+          subject: template.subject,
+          text: template.text || "",
+          html: template.html || "",
+          updatedBy: req.user.userId
+        }
+      },
+      { upsert: true }
+    );
+
+    if (result?.upsertedId) createdCount += 1;
+    else skippedCount += 1;
+  }
+
+  res.status(200).json({
+    message: "Template seeding completed",
+    createdCount,
+    skippedCount
+  });
+});
+
+const createMailTemplate = asyncHandler(async (req, res) => {
+  const key = normalizeMailTemplateKey(req.body.key);
+  const name = String(req.body.name || "").trim();
+  const description = String(req.body.description || "").trim();
+  const subject = String(req.body.subject || "").trim();
+  const text = String(req.body.text || "");
+  const html = String(req.body.html || "");
+
+  if (!name) throw new ApiError(400, "name is required");
+  if (!subject) throw new ApiError(400, "subject is required");
+  if (!text && !html) throw new ApiError(400, "text or html is required");
+
+  try {
+    const created = await MailTemplate.create({
+      key,
+      name,
+      description,
+      subject,
+      text,
+      html,
+      updatedBy: req.user.userId
+    });
+
+    res.status(201).json({
+      message: "Template created",
+      template: {
+        id: String(created._id),
+        key: created.key,
+        name: created.name,
+        description: created.description || "",
+        subject: created.subject,
+        text: created.text || "",
+        html: created.html || "",
+        updatedAt: created.updatedAt,
+        createdAt: created.createdAt
+      }
+    });
+  } catch (error) {
+    handleDuplicateKeyError(error, "Template");
+  }
+});
+
+const updateMailTemplate = asyncHandler(async (req, res) => {
+  const { templateId } = req.params;
+  if (!Types.ObjectId.isValid(templateId)) throw new ApiError(400, "templateId is invalid");
+
+  const patch = {};
+  if (req.body.key !== undefined) patch.key = normalizeMailTemplateKey(req.body.key);
+  if (req.body.name !== undefined) patch.name = String(req.body.name || "").trim();
+  if (req.body.description !== undefined) patch.description = String(req.body.description || "").trim();
+  if (req.body.subject !== undefined) patch.subject = String(req.body.subject || "").trim();
+  if (req.body.text !== undefined) patch.text = String(req.body.text || "");
+  if (req.body.html !== undefined) patch.html = String(req.body.html || "");
+  patch.updatedBy = req.user.userId;
+
+  if (!patch.name && req.body.name !== undefined) {
+    throw new ApiError(400, "name cannot be empty");
+  }
+  if (!patch.subject && req.body.subject !== undefined) {
+    throw new ApiError(400, "subject cannot be empty");
+  }
+
+  try {
+    const updated = await MailTemplate.findByIdAndUpdate(
+      templateId,
+      { $set: patch },
+      { new: true }
+    )
+      .lean()
+      .exec();
+
+    if (!updated) throw new ApiError(404, "Template not found");
+
+    res.status(200).json({
+      message: "Template updated",
+      template: {
+        id: String(updated._id),
+        key: updated.key,
+        name: updated.name,
+        description: updated.description || "",
+        subject: updated.subject,
+        text: updated.text || "",
+        html: updated.html || "",
+        updatedAt: updated.updatedAt,
+        createdAt: updated.createdAt
+      }
+    });
+  } catch (error) {
+    handleDuplicateKeyError(error, "Template");
+  }
+});
+
+const deleteMailTemplate = asyncHandler(async (req, res) => {
+  const { templateId } = req.params;
+  if (!Types.ObjectId.isValid(templateId)) throw new ApiError(400, "templateId is invalid");
+
+  const result = await MailTemplate.deleteOne({ _id: templateId });
+  if (!result.deletedCount) throw new ApiError(404, "Template not found");
+
+  res.status(200).json({ message: "Template deleted" });
+});
+
 const sendTestMail = asyncHandler(async (req, res) => {
   const { to } = req.body;
   const recipient = normalizeEmail(to);
@@ -1798,14 +2088,31 @@ const sendTestMail = asyncHandler(async (req, res) => {
 });
 
 const sendBulkMail = asyncHandler(async (req, res) => {
-  const { role = null, toEmails = [], subject, text = "", html = "" } = req.body;
-  if (!subject) throw new ApiError(400, "subject is required");
-  if (!text && !html) throw new ApiError(400, "Either text or html body is required");
+  const {
+    role = null,
+    toEmails = [],
+    subject = "",
+    text = "",
+    html = "",
+    templateKey = "",
+    templateVars = null
+  } = req.body;
 
   const normalizedRole = role ? String(role).trim().toUpperCase() : null;
   if (normalizedRole && normalizedRole !== "ALL" && !Object.values(ROLES).includes(normalizedRole)) {
     throw new ApiError(400, "Invalid role filter");
   }
+
+  const normalizedTemplateKey = templateKey ? normalizeMailTemplateKey(templateKey) : "";
+  const hasTemplate = Boolean(normalizedTemplateKey);
+
+  if (!hasTemplate) {
+    if (!subject) throw new ApiError(400, "subject is required");
+    if (!text && !html) throw new ApiError(400, "Either text or html body is required");
+  }
+
+  const varsFromBody =
+    templateVars && typeof templateVars === "object" && !Array.isArray(templateVars) ? templateVars : {};
 
   let customEmailList = [];
   if (Array.isArray(toEmails)) {
@@ -1848,33 +2155,83 @@ const sendBulkMail = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Provide a role or at least one custom email");
   }
 
-  const roleRecipients = new Set();
+  const deriveRecipientName = (email) => {
+    const localPart = String(email || "").split("@")[0] || "";
+    const sanitized = localPart.replace(/[^a-zA-Z0-9]/g, " ").trim();
+    return sanitized || "User";
+  };
+
+  const recipientsByEmail = new Map();
+  customRecipients.forEach((email) => {
+    recipientsByEmail.set(email, { email, name: deriveRecipientName(email) });
+  });
+
+  let roleRecipientCount = 0;
   if (normalizedRole) {
     const roleFilter = normalizedRole === "ALL" ? {} : { role: normalizedRole };
-    const users = await User.find({ ...roleFilter, isVerified: true }).select("email").lean().exec();
+    const users = await User.find({ ...roleFilter, isVerified: true })
+      .select("email name")
+      .lean()
+      .exec();
     users.forEach((item) => {
-      const normalized = normalizeEmail(item.email);
-      if (normalized) roleRecipients.add(normalized);
+      const email = normalizeEmail(item.email);
+      if (!email) return;
+      const name = String(item.name || "").trim() || deriveRecipientName(email);
+      recipientsByEmail.set(email, { email, name });
     });
+    roleRecipientCount = users.length;
   }
 
-  const recipients = new Set([...customRecipients, ...roleRecipients]);
-  if (!recipients.size) {
+  const targets = Array.from(recipientsByEmail.values());
+  if (!targets.length) {
     throw new ApiError(400, "No recipients found");
   }
 
+  let resolvedTemplate = null;
+  if (hasTemplate) {
+    const storedTemplate = await getTemplateByKey(normalizedTemplateKey);
+    const fallbackTemplate = getDefaultTemplateByKey(normalizedTemplateKey);
+    resolvedTemplate = storedTemplate || fallbackTemplate;
+    if (!resolvedTemplate) {
+      throw new ApiError(404, "Template not found");
+    }
+  }
+
   const mailSettings = await getActiveMailSettings();
-  const targets = Array.from(recipients);
   const results = await Promise.allSettled(
-    targets.map((email) =>
-      sendMail({
-        to: email,
-        subject: String(subject),
-        text: String(text || ""),
-        html: String(html || ""),
+    targets.map((recipient) => {
+      const mergedVars = buildCommonMailVars({
+        name: recipient.name,
+        email: recipient.email,
+        ...varsFromBody
+      });
+
+      const subjectValue = resolvedTemplate
+        ? renderString(resolvedTemplate.subject, mergedVars, { htmlEscape: false }).trim()
+        : renderString(String(subject || ""), mergedVars, { htmlEscape: false }).trim();
+      const textValue = resolvedTemplate
+        ? renderString(resolvedTemplate.text || "", mergedVars, { htmlEscape: false })
+        : renderString(String(text || ""), mergedVars, { htmlEscape: false });
+      const htmlValue = resolvedTemplate
+        ? renderString(resolvedTemplate.html || "", mergedVars, { htmlEscape: true })
+        : renderString(String(html || ""), mergedVars, { htmlEscape: true });
+
+      const effectiveSubject = subjectValue || (hasTemplate ? normalizedTemplateKey : String(subject || ""));
+      const effectiveText = textValue || "";
+      const effectiveHtml = htmlValue || "";
+
+      if (!effectiveText && !effectiveHtml) {
+        return Promise.reject(new Error("mail_body_empty"));
+      }
+
+      return sendMail({
+        to: recipient.email,
+        subject: effectiveSubject,
+        text: effectiveText,
+        html: effectiveHtml,
         smtpConfig: mailSettings
-      })
-    )
+      });
+    })
   );
 
   const failed = [];
@@ -1884,7 +2241,7 @@ const sendBulkMail = asyncHandler(async (req, res) => {
       sentCount += 1;
     } else {
       failed.push({
-        email: targets[index],
+        email: targets[index]?.email,
         reason: item.reason?.message || "send_failed"
       });
     }
@@ -1893,9 +2250,10 @@ const sendBulkMail = asyncHandler(async (req, res) => {
   res.status(200).json({
     message: "Bulk mail processing completed",
     targetRole: normalizedRole || "CUSTOM",
+    templateKey: normalizedTemplateKey || null,
     customRecipientCount: customRecipients.size,
-    roleRecipientCount: roleRecipients.size,
-    recipientCount: recipients.size,
+    roleRecipientCount,
+    recipientCount: targets.length,
     sentCount,
     failedCount: failed.length,
     failed
@@ -2009,15 +2367,23 @@ module.exports = {
   getDepartments,
   getUploadsAdmin,
   getMailSettings,
+  getMailTemplates,
+  getMySqlFileDbSettings,
   getSubjects,
   getAnalytics,
   getAnnouncementsForAdmin,
   getUsers,
+  seedMailTemplates,
   sendBulkMail,
   sendTestMail,
+  testMySqlFileDbSettings,
+  createMailTemplate,
+  updateMailTemplate,
+  deleteMailTemplate,
   updateClass,
   updateDepartment,
   updateSubject,
   updateUserByAdmin,
+  upsertMySqlFileDbSettings,
   upsertMailSettings
 };

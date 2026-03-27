@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import GlassCard from "../../components/GlassCard";
 import api from "../../services/api";
+import useRowSelection from "../../hooks/useRowSelection";
 
 export default function AdminClassesPage() {
   const [departments, setDepartments] = useState([]);
@@ -41,10 +42,32 @@ export default function AdminClassesPage() {
   const [error, setError] = useState("");
   const [showClassForm, setShowClassForm] = useState(false);
   const [showSubjectForm, setShowSubjectForm] = useState(false);
+  const [bulkDeletingClasses, setBulkDeletingClasses] = useState(false);
+  const [bulkDeletingSubjects, setBulkDeletingSubjects] = useState(false);
+
+  const {
+    selectedIdList: selectedClassIds,
+    selectedCount: selectedClassCount,
+    isSelected: isClassSelected,
+    toggleSelected: toggleClassSelected,
+    toggleAll: toggleAllClasses,
+    clearSelection: clearClassSelection
+  } = useRowSelection();
+
+  const {
+    selectedIdList: selectedSubjectIds,
+    selectedCount: selectedSubjectCount,
+    isSelected: isSubjectSelected,
+    toggleSelected: toggleSubjectSelected,
+    toggleAll: toggleAllSubjects,
+    clearSelection: clearSubjectSelection
+  } = useRowSelection();
 
   const loadData = async () => {
     setLoading(true);
     setError("");
+    clearClassSelection();
+    clearSubjectSelection();
     try {
       const [departmentsResponse, classesResponse, subjectsResponse, facultyResponse] =
         await Promise.all([
@@ -148,6 +171,39 @@ export default function AdminClassesPage() {
     }
   };
 
+  const handleBulkDeleteClasses = async () => {
+    if (selectedClassCount === 0) return;
+    if (!window.confirm(`Delete ${selectedClassCount} classes?`)) return;
+
+    setError("");
+    setMessage("");
+    setBulkDeletingClasses(true);
+
+    let deletedCount = 0;
+    let failedCount = 0;
+    try {
+      for (const classId of selectedClassIds) {
+        try {
+          await api.delete(`/admin/classes/${classId}`);
+          deletedCount += 1;
+        } catch (_deleteError) {
+          failedCount += 1;
+        }
+      }
+
+      if (failedCount === 0) {
+        setMessage(`Deleted ${deletedCount} class${deletedCount === 1 ? "" : "es"}`);
+      } else {
+        setError(`Deleted ${deletedCount}, failed ${failedCount}`);
+      }
+
+      clearClassSelection();
+      loadData();
+    } finally {
+      setBulkDeletingClasses(false);
+    }
+  };
+
   const startEditSubject = (item) => {
     setEditingSubjectId(item.id);
     setEditSubjectForm({
@@ -188,6 +244,46 @@ export default function AdminClassesPage() {
       setError(requestError?.response?.data?.message || "Failed to delete subject");
     }
   };
+
+  const handleBulkDeleteSubjects = async () => {
+    if (selectedSubjectCount === 0) return;
+    if (!window.confirm(`Delete ${selectedSubjectCount} subjects and linked uploads?`)) return;
+
+    setError("");
+    setMessage("");
+    setBulkDeletingSubjects(true);
+
+    let deletedCount = 0;
+    let failedCount = 0;
+    try {
+      for (const subjectId of selectedSubjectIds) {
+        try {
+          await api.delete(`/admin/subjects/${subjectId}`);
+          deletedCount += 1;
+        } catch (_deleteError) {
+          failedCount += 1;
+        }
+      }
+
+      if (failedCount === 0) {
+        setMessage(`Deleted ${deletedCount} subject${deletedCount === 1 ? "" : "s"}`);
+      } else {
+        setError(`Deleted ${deletedCount}, failed ${failedCount}`);
+      }
+
+      clearSubjectSelection();
+      loadData();
+    } finally {
+      setBulkDeletingSubjects(false);
+    }
+  };
+
+  const classIds = classes.map((item) => item.id);
+  const allClassesSelected = classIds.length > 0 && classIds.every((id) => isClassSelected(id));
+
+  const subjectIds = subjects.map((item) => item.id);
+  const allSubjectsSelected =
+    subjectIds.length > 0 && subjectIds.every((id) => isSubjectSelected(id));
 
   return (
     <section className="space-y-5">
@@ -340,11 +436,43 @@ export default function AdminClassesPage() {
 
         {loading ? <p className="mt-3 text-soft">Loading classes...</p> : null}
         {!loading && classes.length === 0 ? <p className="mt-3 text-soft">No classes available.</p> : null}
+
+        {selectedClassCount > 0 ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+            <p className="text-xs text-soft">{selectedClassCount} selected</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleBulkDeleteClasses}
+                disabled={bulkDeletingClasses}
+                className="rounded-lg bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-100 disabled:opacity-70"
+              >
+                {bulkDeletingClasses ? "Deleting..." : "Delete Selected"}
+              </button>
+              <button
+                type="button"
+                onClick={clearClassSelection}
+                className="rounded-lg bg-white/15 px-3 py-1 text-xs text-white"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {classes.length > 0 ? (
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="text-soft">
                 <tr>
+                  <th className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allClassesSelected}
+                      onChange={() => toggleAllClasses(classIds)}
+                      aria-label="Select all classes"
+                    />
+                  </th>
                   <th className="px-3 py-2">Class</th>
                   <th className="px-3 py-2">Department</th>
                   <th className="px-3 py-2">Year</th>
@@ -355,6 +483,14 @@ export default function AdminClassesPage() {
               <tbody>
                 {classes.map((item) => (
                   <tr key={item.id} className="border-t border-white/10">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={isClassSelected(item.id)}
+                        onChange={() => toggleClassSelected(item.id)}
+                        aria-label={`Select class ${item.name}`}
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       {editingClassId === item.id ? (
                         <input
@@ -474,11 +610,43 @@ export default function AdminClassesPage() {
       <GlassCard>
         <h3 className="font-display text-lg text-white">Subjects</h3>
         {subjects.length === 0 ? <p className="mt-3 text-soft">No subjects available.</p> : null}
+
+        {selectedSubjectCount > 0 ? (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2">
+            <p className="text-xs text-soft">{selectedSubjectCount} selected</p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={handleBulkDeleteSubjects}
+                disabled={bulkDeletingSubjects}
+                className="rounded-lg bg-red-500/20 px-3 py-1 text-xs font-semibold text-red-100 disabled:opacity-70"
+              >
+                {bulkDeletingSubjects ? "Deleting..." : "Delete Selected"}
+              </button>
+              <button
+                type="button"
+                onClick={clearSubjectSelection}
+                className="rounded-lg bg-white/15 px-3 py-1 text-xs text-white"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         {subjects.length > 0 ? (
           <div className="mt-4 overflow-x-auto">
             <table className="min-w-full text-left text-sm">
               <thead className="text-soft">
                 <tr>
+                  <th className="px-3 py-2">
+                    <input
+                      type="checkbox"
+                      checked={allSubjectsSelected}
+                      onChange={() => toggleAllSubjects(subjectIds)}
+                      aria-label="Select all subjects"
+                    />
+                  </th>
                   <th className="px-3 py-2">Code</th>
                   <th className="px-3 py-2">Subject</th>
                   <th className="px-3 py-2">Class</th>
@@ -489,6 +657,14 @@ export default function AdminClassesPage() {
               <tbody>
                 {subjects.map((item) => (
                   <tr key={item.id} className="border-t border-white/10">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={isSubjectSelected(item.id)}
+                        onChange={() => toggleSubjectSelected(item.id)}
+                        aria-label={`Select subject ${item.code}`}
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       {editingSubjectId === item.id ? (
                         <input
@@ -591,7 +767,7 @@ export default function AdminClassesPage() {
                             <button
                               type="button"
                               onClick={() => deleteSubject(item.id)}
-                              className="rounded-lg bg-red-500/20 px-2 py-1 text-xs text-red-100"
+                              className="rounded-lg bg-red-100 px-2 py-1 text-xs text-black-100"
                             >
                               Delete
                             </button>

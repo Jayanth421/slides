@@ -1,5 +1,6 @@
 const bcrypt = require("bcrypt");
 const crypto = require("crypto");
+const { Types } = require("mongoose");
 const { OTP_PURPOSES } = require("../config/constants");
 const ApiError = require("../utils/apiError");
 const {
@@ -9,6 +10,9 @@ const {
   revokeActiveOtps
 } = require("../models/otpModel");
 const { sendMail } = require("./mailerService");
+const { getActiveMailSettings } = require("./mailSettingsService");
+const { renderMailTemplateByKey } = require("./mailTemplateRenderer");
+const User = require("../mongoModels/User");
 
 function generateOtpCode() {
   return String(crypto.randomInt(100000, 1000000));
@@ -30,6 +34,28 @@ function buildExpiryDate(expiryMinutes) {
 function getRemainingCooldownSeconds(createdAt, cooldownSeconds) {
   const elapsed = Math.floor((Date.now() - new Date(createdAt).getTime()) / 1000);
   return Math.max(0, cooldownSeconds - elapsed);
+}
+
+function deriveRecipientName(email) {
+  const localPart = String(email || "").split("@")[0] || "";
+  const sanitized = localPart.replace(/[^a-zA-Z0-9]/g, " ").trim();
+  return sanitized || "User";
+}
+
+function buildActionUrl({ purpose, email }) {
+  const portalUrl = String(process.env.APP_BASE_URL || "").trim().replace(/\/$/, "");
+  if (!portalUrl) return "";
+
+  const encodedEmail = encodeURIComponent(String(email || "").trim());
+  if (purpose === OTP_PURPOSES.PASSWORD_RESET) {
+    return `${portalUrl}/forgot-password?email=${encodedEmail}`;
+  }
+
+  if (purpose === OTP_PURPOSES.REGISTRATION) {
+    return `${portalUrl}/verify-otp?email=${encodedEmail}`;
+  }
+
+  return portalUrl;
 }
 
 async function createAndSendOtp({
@@ -66,21 +92,31 @@ async function createAndSendOtp({
     expiresAt
   });
 
-  const text = `Your CMR Smart Portal OTP is ${otp}. It expires in ${expiryMinutes} minutes.`;
-  const html = `
-    <div style="font-family: Arial, sans-serif; line-height: 1.4;">
-      <h3>CMR Smart Presentation Portal</h3>
-      <p>Your OTP is:</p>
-      <p style="font-size: 24px; font-weight: bold; letter-spacing: 2px;">${otp}</p>
-      <p>This OTP expires in ${expiryMinutes} minutes.</p>
-    </div>
-  `;
+  let name = deriveRecipientName(email);
+  if (userId && Types.ObjectId.isValid(String(userId))) {
+    const userDoc = await User.findById(userId).select("name").lean().exec();
+    if (userDoc?.name) {
+      name = String(userDoc.name).trim() || name;
+    }
+  }
 
+  const actionUrl = buildActionUrl({ purpose, email });
+  const templateKey = purpose === OTP_PURPOSES.PASSWORD_RESET ? "PASSWORD_RESET_OTP" : "OTP_VERIFICATION";
+  const rendered = await renderMailTemplateByKey(templateKey, {
+    name,
+    otp,
+    expiryMinutes,
+    actionUrl,
+    purpose
+  });
+
+  const mailSettings = await getActiveMailSettings();
   await sendMail({
     to: email,
-    subject: "CMR Smart Portal OTP Verification",
-    text,
-    html
+    subject: rendered.subject,
+    text: rendered.text,
+    html: rendered.html,
+    smtpConfig: mailSettings
   });
 
   return { expiresAt };

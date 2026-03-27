@@ -43,7 +43,7 @@ export default function TopBar() {
 
   return (
     <header
-      className={`mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 px-4 py-3 ${
+      className={`mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue/10 px-4 py-3 ${
         isAdmin ? "admin-topbar" : "bg-white/5"
       } ${isStudent ? "student-topbar" : ""}`}
     >
@@ -52,7 +52,7 @@ export default function TopBar() {
           <img
             src="/auth-assets/logo.jpg"
             alt="CMR logo"
-            className="h-10 w-10 rounded-xl border border-white/15 object-cover"
+            className="h-12 w-12 rounded-xl border border-black/15 object-cover"
             onError={(event) => {
               event.currentTarget.style.display = "none";
             }}
@@ -103,14 +103,7 @@ export default function TopBar() {
             <span className="text-sm font-semibold">{initials}</span>
           )}
         </span>
-        <button
-          type="button"
-          onClick={handleLogout}
-          className="inline-flex items-center gap-2 rounded-xl border border-red-600 bg-red-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-red-700"
-        >
-          <PortalIcon name="logout" className="h-4 w-4" />
-          <span className="hidden sm:inline">Logout</span>
-        </button>
+        
       </div>
     </header>
   );

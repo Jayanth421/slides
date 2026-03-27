@@ -8,10 +8,44 @@ const Subject = require("../mongoModels/Subject");
 const Upload = require("../mongoModels/Upload");
 const User = require("../mongoModels/User");
 const { signUploadToken, verifyUploadToken } = require("../config/jwt");
+const { upsertUploadRecord } = require("../services/mysqlFileDbService");
 const { buildFileUrl, buildUploadUrl, doesUploadedFileExist } = require("../services/storageService");
 const { createUpload } = require("../models/uploadModel");
 const ApiError = require("../utils/apiError");
 const asyncHandler = require("../utils/asyncHandler");
+
+function uniqueStrings(values = []) {
+  return [...new Set((values || []).map((item) => String(item || "").trim()).filter(Boolean))];
+}
+
+function buildStudentFiltersForClasses({ classIds = [], classDescriptors = [] }) {
+  const normalizedClassIds = uniqueStrings(classIds);
+  const descriptorMap = new Map();
+
+  (classDescriptors || []).forEach((item) => {
+    const branch = String(item?.branch || item?.departmentCode || "").trim().toUpperCase();
+    const year = Number(item?.year);
+    const section = String(item?.section || "").trim().toUpperCase();
+    if (!branch || !Number.isInteger(year) || year <= 0 || !section) return;
+
+    const key = `${branch}|${year}|${section}`;
+    if (!descriptorMap.has(key)) {
+      descriptorMap.set(key, { branch, year, section });
+    }
+  });
+
+  const normalizedDescriptors = Array.from(descriptorMap.values());
+
+  const or = [];
+  if (normalizedClassIds.length) {
+    or.push({ classId: { $in: normalizedClassIds } });
+  }
+  normalizedDescriptors.forEach((item) => {
+    or.push({ branch: item.branch, year: item.year, section: item.section });
+  });
+
+  return { classIds: normalizedClassIds, descriptors: normalizedDescriptors, or };
+}
 
 function sanitizeText(value, maxLength = 800) {
   const normalized = String(value || "").trim();
@@ -104,12 +138,27 @@ const getFacultyDashboard = asyncHandler(async (req, res) => {
     getAssignedSubjects(facultyId)
   ]);
 
-  const classIds = [...new Set(subjects.map((item) => String(item.classId?._id || item.classId)).filter(Boolean))];
+  const subjectClassIds = subjects
+    .map((item) => String(item.classId?._id || item.classId || "").trim())
+    .filter(Boolean);
+  const facultyClassIds = (classes || []).map((item) => item.id).filter(Boolean);
+  const classIds = uniqueStrings([...subjectClassIds, ...facultyClassIds]);
   const subjectIds = subjects.map((item) => item._id);
+  const studentFilters = buildStudentFiltersForClasses({
+    classIds,
+    classDescriptors: [
+      ...(classes || []),
+      ...(subjects || []).map((item) => ({
+        branch: item.classId?.departmentId?.code || null,
+        year: item.classId?.year || null,
+        section: item.classId?.section || null
+      }))
+    ]
+  });
 
   const [studentsCount, totalPresentations, recentUploads, announcements] = await Promise.all([
-    classIds.length
-      ? User.countDocuments({ role: ROLES.STUDENT, classId: { $in: classIds }, isVerified: true })
+    studentFilters.or.length
+      ? User.countDocuments({ role: ROLES.STUDENT, isVerified: true, $or: studentFilters.or })
       : 0,
     subjectIds.length
       ? Upload.countDocuments({ subjectId: { $in: subjectIds }, category: "STUDENT_PRESENTATION" })
@@ -214,8 +263,18 @@ const getFacultySubjects = asyncHandler(async (req, res) => {
   const rows = await Promise.all(
     subjects.map(async (subject) => {
       const classId = subject.classId?._id ? String(subject.classId._id) : null;
-      const studentCount = classId
-        ? await User.countDocuments({ role: ROLES.STUDENT, classId, isVerified: true })
+      const studentOr = [];
+      if (classId) studentOr.push({ classId });
+      if (subject.classId?.departmentId?.code && subject.classId?.year && subject.classId?.section) {
+        studentOr.push({
+          branch: String(subject.classId.departmentId.code).trim().toUpperCase(),
+          year: Number(subject.classId.year),
+          section: String(subject.classId.section).trim().toUpperCase()
+        });
+      }
+
+      const studentCount = studentOr.length
+        ? await User.countDocuments({ role: ROLES.STUDENT, isVerified: true, $or: studentOr })
         : 0;
 
       return {
@@ -389,6 +448,12 @@ const reviewFacultyPresentation = asyncHandler(async (req, res) => {
   upload.reviewedBy = facultyId;
   upload.reviewedAt = new Date();
   await upload.save();
+
+  try {
+    await upsertUploadRecord(upload);
+  } catch (error) {
+    console.warn("MySQL file DB sync failed:", error?.message || String(error));
+  }
 
   const updated = await Upload.findById(presentationId)
     .populate({ path: "subjectId", select: "name code classId" })
@@ -570,17 +635,37 @@ const getFacultyLectureMaterials = asyncHandler(async (req, res) => {
 
 const getFacultyStudents = asyncHandler(async (req, res) => {
   const facultyId = req.user.userId;
-  const subjects = await getAssignedSubjects(facultyId);
-  const classIds = [...new Set(subjects.map((item) => String(item.classId?._id || item.classId)).filter(Boolean))];
+  await ensureFaculty(facultyId);
+  const [classes, subjects] = await Promise.all([
+    getFacultyClasses(facultyId),
+    getAssignedSubjects(facultyId)
+  ]);
 
-  if (!classIds.length) {
+  const subjectClassIds = subjects
+    .map((item) => String(item.classId?._id || item.classId || "").trim())
+    .filter(Boolean);
+  const facultyClassIds = (classes || []).map((item) => item.id).filter(Boolean);
+  const classIds = uniqueStrings([...subjectClassIds, ...facultyClassIds]);
+  const studentFilters = buildStudentFiltersForClasses({
+    classIds,
+    classDescriptors: [
+      ...(classes || []),
+      ...(subjects || []).map((item) => ({
+        branch: item.classId?.departmentId?.code || null,
+        year: item.classId?.year || null,
+        section: item.classId?.section || null
+      }))
+    ]
+  });
+
+  if (!studentFilters.or.length) {
     return res.status(200).json({ students: [] });
   }
 
   const students = await User.find({
     role: ROLES.STUDENT,
-    classId: { $in: classIds },
-    isVerified: true
+    isVerified: true,
+    $or: studentFilters.or
   })
     .select("name email rollNumber branch year section mobile profilePhoto classId lastLoginAt")
     .sort({ name: 1 })
